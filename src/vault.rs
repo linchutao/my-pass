@@ -7,10 +7,52 @@ use crate::model::{
 };
 use chrono::Utc;
 use directories::ProjectDirs;
+use rand_core::{OsRng, RngCore};
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
+
+struct SecretKey([u8; 32]);
+
+impl SecretKey {
+    fn new(key: [u8; 32]) -> Self {
+        Self(key)
+    }
+
+    fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    fn into_inner(mut self) -> [u8; 32] {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+struct SecretBytes(Vec<u8>);
+
+impl SecretBytes {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 pub struct UnlockedVault {
     pub file: VaultFile,
@@ -46,10 +88,10 @@ pub fn init_vault(path: &Path, master_password: &str) -> AppResult<()> {
     }
 
     let kdf = default_kdf_config(random_salt());
-    let mut kek = derive_kek(master_password, &kdf)?;
-    let mut dek = random_key();
-    let key_wrap = wrap_dek(&kek, &dek)?;
-    let data = encrypt_vault_data(&dek, &VaultData::empty())?;
+    let kek = SecretKey::new(derive_kek(master_password, &kdf)?);
+    let dek = SecretKey::new(random_key());
+    let key_wrap = wrap_dek(kek.expose(), dek.expose())?;
+    let data = encrypt_vault_data(dek.expose(), &VaultData::empty())?;
     let file = VaultFile {
         version: VAULT_VERSION,
         kdf,
@@ -58,8 +100,6 @@ pub fn init_vault(path: &Path, master_password: &str) -> AppResult<()> {
     };
 
     write_vault_file(path, &file)?;
-    kek.zeroize();
-    dek.zeroize();
     Ok(())
 }
 
@@ -67,15 +107,17 @@ pub fn unlock_vault(path: &Path, master_password: &str) -> AppResult<UnlockedVau
     let file = read_vault_file(path)?;
     validate_vault_file(&file)?;
 
-    let mut kek = derive_kek(master_password, &file.kdf)?;
-    let dek_result = unwrap_dek(&kek, &file.key_wrap);
-    kek.zeroize();
-    let dek = dek_result?;
+    let kek = SecretKey::new(derive_kek(master_password, &file.kdf)?);
+    let dek = SecretKey::new(unwrap_dek(kek.expose(), &file.key_wrap)?);
 
-    let plaintext = decrypt(&dek, &file.data)?;
-    let data = serde_json::from_slice(&plaintext)?;
+    let plaintext = SecretBytes::new(decrypt(dek.expose(), &file.data)?);
+    let data = serde_json::from_slice(plaintext.expose())?;
 
-    Ok(UnlockedVault { file, data, dek })
+    Ok(UnlockedVault {
+        file,
+        data,
+        dek: dek.into_inner(),
+    })
 }
 
 pub fn add_entry(
@@ -164,9 +206,8 @@ pub fn change_master_password(
 
     let mut vault = unlock_vault(path, old_master_password)?;
     let kdf = default_kdf_config(random_salt());
-    let mut kek = derive_kek(new_master_password, &kdf)?;
-    let key_wrap = wrap_dek(&kek, &vault.dek)?;
-    kek.zeroize();
+    let kek = SecretKey::new(derive_kek(new_master_password, &kdf)?);
+    let key_wrap = wrap_dek(kek.expose(), &vault.dek)?;
 
     vault.file.kdf = kdf;
     vault.file.key_wrap = key_wrap;
@@ -190,18 +231,14 @@ fn write_vault_file(path: &Path, file: &VaultFile) -> AppResult<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let temp_path = temp_vault_path(path);
     let contents = serde_json::to_vec_pretty(file)?;
-    fs::write(&temp_path, contents)?;
+    let (temp_path, mut temp_file) = create_private_temp_file(path)?;
+    temp_file.write_all(&contents)?;
+    temp_file.sync_all()?;
+    drop(temp_file);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
-    }
-
-    fs::rename(temp_path, path)?;
+    fs::rename(&temp_path, path)?;
+    sync_parent_dir(path)?;
     Ok(())
 }
 
@@ -226,8 +263,8 @@ fn save_unlocked(path: &Path, vault: &mut UnlockedVault) -> AppResult<()> {
 }
 
 fn encrypt_vault_data(dek: &[u8; 32], data: &VaultData) -> AppResult<CipherBlob> {
-    let plaintext = serde_json::to_vec(data)?;
-    encrypt(dek, &plaintext)
+    let plaintext = SecretBytes::new(serde_json::to_vec(data)?);
+    encrypt(dek, plaintext.expose())
 }
 
 fn validate_cipher_blob(blob: &CipherBlob) -> AppResult<()> {
@@ -237,12 +274,53 @@ fn validate_cipher_blob(blob: &CipherBlob) -> AppResult<()> {
     Ok(())
 }
 
-fn temp_vault_path(path: &Path) -> PathBuf {
+fn temp_vault_path(path: &Path, random_suffix: u64) -> PathBuf {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("vault.mypass");
-    path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id()))
+    path.with_file_name(format!(".{file_name}.tmp-{random_suffix:016x}"))
+}
+
+fn create_private_temp_file(path: &Path) -> AppResult<(PathBuf, File)> {
+    let mut last_error = None;
+
+    for _ in 0..16 {
+        let temp_path = temp_vault_path(path, OsRng.next_u64());
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            options.mode(0o600);
+        }
+
+        match options.open(&temp_path) {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_error = Some(err);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::other("could not create temporary vault file"))
+        .into())
+}
+
+fn sync_parent_dir(path: &Path) -> AppResult<()> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
+    };
+
+    File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -264,6 +342,20 @@ mod tests {
 
         assert_eq!(unlocked.file.version, crate::model::VAULT_VERSION);
         assert!(unlocked.data.entries.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_writes_private_vault_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+
+        init_vault(&path, "correct horse battery staple").expect("init vault");
+
+        let mode = fs::metadata(&path).expect("vault metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
@@ -344,5 +436,31 @@ mod tests {
         let entry = get_entry(&path, "new-master", "github").expect("new password unlocks");
         assert_eq!(entry.username, "clyde");
         assert_eq!(entry.password, "secret");
+    }
+
+    #[test]
+    fn change_master_rejects_same_password() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+        init_vault(&path, "master").expect("init vault");
+
+        let err = change_master_password(&path, "master", "master")
+            .expect_err("same master password should fail");
+
+        assert!(matches!(err, AppError::MasterPasswordUnchanged));
+        unlock_vault(&path, "master").expect("original master still works");
+    }
+
+    #[test]
+    fn change_master_rejects_wrong_current_password() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+        init_vault(&path, "old-master").expect("init vault");
+
+        let err = change_master_password(&path, "wrong-master", "new-master")
+            .expect_err("wrong current master should fail");
+
+        assert!(matches!(err, AppError::AuthenticationFailed));
+        unlock_vault(&path, "old-master").expect("old master still works");
     }
 }
