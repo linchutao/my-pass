@@ -3,7 +3,7 @@ use crate::errors::{AppError, AppResult};
 use crate::vault;
 use clap::{Parser, Subcommand};
 use rpassword::prompt_password;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -56,14 +56,14 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             println!("Vault initialized at {}", vault_path.display());
         }
         Commands::Add { entry } => {
-            let master = prompt_password("Master password: ")?;
+            let master = prompt_secret("Master password: ")?;
             let username = prompt_line("Username: ")?;
             let password = prompt_confirmed_password("Password: ", "Confirm password: ")?;
             vault::add_entry(&vault_path, &master, &entry, &username, &password)?;
             println!("Saved entry: {entry}");
         }
         Commands::Get { entry, show } => {
-            let master = prompt_password("Master password: ")?;
+            let master = prompt_secret("Master password: ")?;
             let found = vault::get_entry(&vault_path, &master, &entry)?;
             if show {
                 println!("Username: {}", found.username);
@@ -75,7 +75,7 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             }
         }
         Commands::Update { entry } => {
-            let master = prompt_password("Master password: ")?;
+            let master = prompt_secret("Master password: ")?;
             let existing = vault::get_entry(&vault_path, &master, &entry)?;
             let username_prompt = format!("Username [{}]: ", existing.username);
             let username_input = prompt_line(&username_prompt)?;
@@ -89,7 +89,7 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             println!("Updated entry: {entry}");
         }
         Commands::Delete { entry } => {
-            let master = prompt_password("Master password: ")?;
+            let master = prompt_secret("Master password: ")?;
             let confirmation = prompt_line(&format!(
                 "Delete entry \"{entry}\"? Type the entry name to confirm: "
             ))?;
@@ -100,13 +100,13 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             println!("Deleted entry: {entry}");
         }
         Commands::List => {
-            let master = prompt_password("Master password: ")?;
+            let master = prompt_secret("Master password: ")?;
             for (name, username) in vault::list_entries(&vault_path, &master)? {
                 println!("{name}\t{username}");
             }
         }
         Commands::ChangeMaster => {
-            let current = prompt_password("Current master password: ")?;
+            let current = prompt_secret("Current master password: ")?;
             let new = prompt_confirmed_password(
                 "New master password: ",
                 "Confirm new master password: ",
@@ -120,12 +120,20 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
 }
 
 fn prompt_confirmed_password(prompt: &str, confirm_prompt: &str) -> AppResult<String> {
-    let password = prompt_password(prompt)?;
-    let confirmation = prompt_password(confirm_prompt)?;
+    let password = prompt_secret(prompt)?;
+    let confirmation = prompt_secret(confirm_prompt)?;
     if password != confirmation {
         return Err(AppError::PasswordMismatch);
     }
     Ok(password)
+}
+
+fn prompt_secret(prompt: &str) -> AppResult<String> {
+    if io::stdin().is_terminal() {
+        return Ok(prompt_password(prompt)?);
+    }
+
+    prompt_line(prompt)
 }
 
 fn prompt_line(prompt: &str) -> AppResult<String> {
