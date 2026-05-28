@@ -312,15 +312,24 @@ fn create_private_temp_file(path: &Path) -> AppResult<(PathBuf, File)> {
 }
 
 fn sync_parent_dir(path: &Path) -> AppResult<()> {
-    let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    else {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
         return Ok(());
-    };
+    }
 
-    File::open(parent)?.sync_all()?;
-    Ok(())
+    #[cfg(unix)]
+    {
+        let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            return Ok(());
+        };
+
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
