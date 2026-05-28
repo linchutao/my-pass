@@ -1,10 +1,10 @@
 use crate::errors::{AppError, AppResult};
-use crate::model::{CipherBlob, KdfConfig, CIPHER_ALGORITHM, KDF_ALGORITHM};
+use crate::model::{CIPHER_ALGORITHM, CipherBlob, KDF_ALGORITHM, KdfConfig};
 use argon2::{Algorithm, Argon2, Params, Version};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit},
 };
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroize;

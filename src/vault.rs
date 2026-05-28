@@ -3,7 +3,7 @@ use crate::crypto::{
 };
 use crate::errors::{AppError, AppResult};
 use crate::model::{
-    CipherBlob, Entry, VaultData, VaultFile, CIPHER_ALGORITHM, KDF_ALGORITHM, VAULT_VERSION,
+    CIPHER_ALGORITHM, CipherBlob, Entry, KDF_ALGORITHM, VAULT_VERSION, VaultData, VaultFile,
 };
 use chrono::Utc;
 use directories::ProjectDirs;
@@ -363,7 +363,11 @@ mod tests {
 
         init_vault(&path, "correct horse battery staple").expect("init vault");
 
-        let mode = fs::metadata(&path).expect("vault metadata").permissions().mode() & 0o777;
+        let mode = fs::metadata(&path)
+            .expect("vault metadata")
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600);
     }
 
