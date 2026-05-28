@@ -1,4 +1,4 @@
-use crate::clipboard::copy_and_clear_later;
+use crate::clipboard::{clear_if_unchanged, copy_secret};
 use crate::errors::{AppError, AppResult};
 use crate::vault;
 use clap::{Parser, Subcommand};
@@ -76,8 +76,11 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 println!("Username: {}", found.username);
                 println!("Password: {}", found.password);
             } else {
-                copy_and_clear_later(found.password.clone(), Duration::from_secs(30))?;
-                println!("Password copied to clipboard and cleared after 30 seconds.");
+                copy_secret(&found.password)?;
+                println!("Password copied to clipboard. It will be cleared in 30 seconds.");
+                std::thread::sleep(Duration::from_secs(30));
+                clear_if_unchanged(&found.password)?;
+                println!("Clipboard cleared if unchanged.");
             }
         }
         Commands::Update { entry } => {

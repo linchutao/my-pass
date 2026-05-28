@@ -346,13 +346,43 @@ fn create_private_output_file(path: &Path) -> std::io::Result<File> {
 }
 
 fn replace_vault_file(temp_path: &Path, path: &Path) -> AppResult<()> {
-    #[cfg(windows)]
+    #[cfg(not(windows))]
     {
-        fs::remove_file(path)?;
+        fs::rename(temp_path, path)?;
+        Ok(())
     }
 
-    fs::rename(temp_path, path)?;
-    Ok(())
+    #[cfg(windows)]
+    {
+        let backup_path = move_existing_vault_to_backup(path)?;
+        if let Err(err) = fs::rename(temp_path, path) {
+            let _ = fs::rename(&backup_path, path);
+            return Err(err.into());
+        }
+
+        let _ = fs::remove_file(backup_path);
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn move_existing_vault_to_backup(path: &Path) -> AppResult<PathBuf> {
+    let mut last_error = None;
+
+    for _ in 0..16 {
+        let backup_path = temp_vault_path(path, OsRng.next_u64());
+        match fs::rename(path, &backup_path) {
+            Ok(()) => return Ok(backup_path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_error = Some(err);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::other("could not create temporary vault backup"))
+        .into())
 }
 
 fn sync_parent_dir(path: &Path) -> AppResult<()> {
