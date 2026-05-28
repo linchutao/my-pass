@@ -6,6 +6,7 @@ use rpassword::prompt_password;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Parser)]
 #[command(name = "mypass", version, about = "Local encrypted password manager")]
@@ -52,31 +53,36 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
         Commands::Init => {
             let master =
                 prompt_confirmed_password("Create master password: ", "Confirm master password: ")?;
-            vault::init_vault(&vault_path, &master)?;
+            vault::init_vault(&vault_path, master.as_str())?;
             println!("Vault initialized at {}", vault_path.display());
         }
         Commands::Add { entry } => {
             let master = prompt_secret("Master password: ")?;
             let username = prompt_line("Username: ")?;
             let password = prompt_confirmed_password("Password: ", "Confirm password: ")?;
-            vault::add_entry(&vault_path, &master, &entry, &username, &password)?;
+            vault::add_entry(
+                &vault_path,
+                master.as_str(),
+                &entry,
+                &username,
+                password.as_str(),
+            )?;
             println!("Saved entry: {entry}");
         }
         Commands::Get { entry, show } => {
             let master = prompt_secret("Master password: ")?;
-            let found = vault::get_entry(&vault_path, &master, &entry)?;
+            let found = vault::get_entry(&vault_path, master.as_str(), &entry)?;
             if show {
                 println!("Username: {}", found.username);
                 println!("Password: {}", found.password);
             } else {
-                println!("Password copied to clipboard. It will be cleared in 30 seconds.");
-                copy_and_clear_later(found.password, Duration::from_secs(30))?;
-                println!("Clipboard cleared.");
+                copy_and_clear_later(found.password.clone(), Duration::from_secs(30))?;
+                println!("Password copied to clipboard and cleared after 30 seconds.");
             }
         }
         Commands::Update { entry } => {
             let master = prompt_secret("Master password: ")?;
-            let existing = vault::get_entry(&vault_path, &master, &entry)?;
+            let existing = vault::get_entry(&vault_path, master.as_str(), &entry)?;
             let username_prompt = format!("Username [{}]: ", existing.username);
             let username_input = prompt_line(&username_prompt)?;
             let username = if username_input.is_empty() {
@@ -85,7 +91,13 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 Some(username_input.as_str())
             };
             let password = prompt_confirmed_password("New password: ", "Confirm new password: ")?;
-            vault::update_entry(&vault_path, &master, &entry, username, &password)?;
+            vault::update_entry(
+                &vault_path,
+                master.as_str(),
+                &entry,
+                username,
+                password.as_str(),
+            )?;
             println!("Updated entry: {entry}");
         }
         Commands::Delete { entry } => {
@@ -96,12 +108,12 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             if confirmation != entry {
                 return Err(AppError::DeleteConfirmationMismatch);
             }
-            vault::delete_entry(&vault_path, &master, &entry)?;
+            vault::delete_entry(&vault_path, master.as_str(), &entry)?;
             println!("Deleted entry: {entry}");
         }
         Commands::List => {
             let master = prompt_secret("Master password: ")?;
-            for (name, username) in vault::list_entries(&vault_path, &master)? {
+            for (name, username) in vault::list_entries(&vault_path, master.as_str())? {
                 println!("{name}\t{username}");
             }
         }
@@ -111,7 +123,7 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 "New master password: ",
                 "Confirm new master password: ",
             )?;
-            vault::change_master_password(&vault_path, &current, &new)?;
+            vault::change_master_password(&vault_path, current.as_str(), new.as_str())?;
             println!("Master password changed.");
         }
     }
@@ -119,21 +131,21 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
     Ok(())
 }
 
-fn prompt_confirmed_password(prompt: &str, confirm_prompt: &str) -> AppResult<String> {
+fn prompt_confirmed_password(prompt: &str, confirm_prompt: &str) -> AppResult<Zeroizing<String>> {
     let password = prompt_secret(prompt)?;
     let confirmation = prompt_secret(confirm_prompt)?;
-    if password != confirmation {
+    if password.as_str() != confirmation.as_str() {
         return Err(AppError::PasswordMismatch);
     }
     Ok(password)
 }
 
-fn prompt_secret(prompt: &str) -> AppResult<String> {
+fn prompt_secret(prompt: &str) -> AppResult<Zeroizing<String>> {
     if io::stdin().is_terminal() {
-        return Ok(prompt_password(prompt)?);
+        return Ok(Zeroizing::new(prompt_password(prompt)?));
     }
 
-    prompt_line(prompt)
+    Ok(Zeroizing::new(prompt_line(prompt)?))
 }
 
 fn prompt_line(prompt: &str) -> AppResult<String> {

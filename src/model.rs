@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use zeroize::Zeroize;
 
 pub const VAULT_VERSION: u32 = 1;
 pub const KDF_ALGORITHM: &str = "argon2id";
@@ -60,6 +61,12 @@ impl std::fmt::Debug for Entry {
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish()
+    }
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        self.password.zeroize();
     }
 }
 

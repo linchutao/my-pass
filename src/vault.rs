@@ -83,10 +83,6 @@ pub fn default_vault_path() -> AppResult<PathBuf> {
 }
 
 pub fn init_vault(path: &Path, master_password: &str) -> AppResult<()> {
-    if path.exists() {
-        return Err(AppError::VaultExists(path.to_path_buf()));
-    }
-
     let kdf = default_kdf_config(random_salt());
     let kek = SecretKey::new(derive_kek(master_password, &kdf)?);
     let dek = SecretKey::new(random_key());
@@ -99,7 +95,7 @@ pub fn init_vault(path: &Path, master_password: &str) -> AppResult<()> {
         data,
     };
 
-    write_vault_file(path, &file)?;
+    create_vault_file(path, &file)?;
     Ok(())
 }
 
@@ -224,12 +220,7 @@ fn read_vault_file(path: &Path) -> AppResult<VaultFile> {
 }
 
 fn write_vault_file(path: &Path, file: &VaultFile) -> AppResult<()> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
-    }
+    ensure_parent_dir(path)?;
 
     let contents = serde_json::to_vec_pretty(file)?;
     let (temp_path, mut temp_file) = create_private_temp_file(path)?;
@@ -237,8 +228,37 @@ fn write_vault_file(path: &Path, file: &VaultFile) -> AppResult<()> {
     temp_file.sync_all()?;
     drop(temp_file);
 
-    fs::rename(&temp_path, path)?;
+    replace_vault_file(&temp_path, path)?;
     sync_parent_dir(path)?;
+    Ok(())
+}
+
+fn create_vault_file(path: &Path, file: &VaultFile) -> AppResult<()> {
+    ensure_parent_dir(path)?;
+
+    let contents = serde_json::to_vec_pretty(file)?;
+    let mut output = create_private_output_file(path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::VaultExists(path.to_path_buf())
+        } else {
+            AppError::Io(err)
+        }
+    })?;
+    output.write_all(&contents)?;
+    output.sync_all()?;
+    drop(output);
+
+    sync_parent_dir(path)?;
+    Ok(())
+}
+
+fn ensure_parent_dir(path: &Path) -> AppResult<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
     Ok(())
 }
 
@@ -311,6 +331,30 @@ fn create_private_temp_file(path: &Path) -> AppResult<(PathBuf, File)> {
         .into())
 }
 
+fn create_private_output_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+
+    options.open(path)
+}
+
+fn replace_vault_file(temp_path: &Path, path: &Path) -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        fs::remove_file(path)?;
+    }
+
+    fs::rename(temp_path, path)?;
+    Ok(())
+}
+
 fn sync_parent_dir(path: &Path) -> AppResult<()> {
     #[cfg(not(unix))]
     {
@@ -351,6 +395,23 @@ mod tests {
 
         assert_eq!(unlocked.file.version, crate::model::VAULT_VERSION);
         assert!(unlocked.data.entries.is_empty());
+    }
+
+    #[test]
+    fn init_existing_vault_fails_without_overwriting() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+        init_vault(&path, "first-master").expect("init vault");
+        let original = fs::read(&path).expect("read original vault");
+
+        let err = init_vault(&path, "second-master").expect_err("existing vault should fail");
+
+        assert!(matches!(err, AppError::VaultExists(existing) if existing == path));
+        assert_eq!(
+            fs::read(&path).expect("read vault after failed init"),
+            original
+        );
+        unlock_vault(&path, "first-master").expect("original master still works");
     }
 
     #[cfg(unix)]
