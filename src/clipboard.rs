@@ -1,21 +1,21 @@
 use crate::errors::{AppError, AppResult};
 use arboard::Clipboard;
-use std::thread;
 use std::time::Duration;
 
 pub fn copy_and_clear_later(secret: String, clear_after: Duration) -> AppResult<()> {
     let mut clipboard =
         Clipboard::new().map_err(|err| AppError::ClipboardUnavailable(err.to_string()))?;
     clipboard
-        .set_text(secret)
+        .set_text(secret.clone())
         .map_err(|err| AppError::ClipboardUnavailable(err.to_string()))?;
 
-    thread::spawn(move || {
-        thread::sleep(clear_after);
-        if let Ok(mut clipboard) = Clipboard::new() {
-            let _ = clipboard.set_text(String::new());
-        }
-    });
+    std::thread::sleep(clear_after);
+
+    if clipboard.get_text().ok().as_deref() == Some(secret.as_str()) {
+        clipboard
+            .set_text(String::new())
+            .map_err(|err| AppError::ClipboardUnavailable(err.to_string()))?;
+    }
 
     Ok(())
 }

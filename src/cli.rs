@@ -69,8 +69,9 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 println!("Username: {}", found.username);
                 println!("Password: {}", found.password);
             } else {
-                copy_and_clear_later(found.password, Duration::from_secs(30))?;
                 println!("Password copied to clipboard. It will be cleared in 30 seconds.");
+                copy_and_clear_later(found.password, Duration::from_secs(30))?;
+                println!("Clipboard cleared.");
             }
         }
         Commands::Update { entry } => {
