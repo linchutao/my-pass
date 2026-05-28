@@ -43,12 +43,24 @@ impl VaultData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
     pub username: String,
     pub password: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for Entry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Entry")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -85,5 +97,22 @@ mod tests {
         assert_eq!(round_trip.kdf.algorithm, "argon2id");
         assert_eq!(round_trip.key_wrap.ciphertext, "encrypted-dek");
         assert_eq!(round_trip.data.ciphertext, "vault-ciphertext");
+    }
+
+    #[test]
+    fn entry_debug_redacts_password() {
+        let now = Utc::now();
+        let entry = Entry {
+            username: "clyde@example.com".to_string(),
+            password: "super-secret".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let debug = format!("{entry:?}");
+
+        assert!(debug.contains("clyde@example.com"));
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("super-secret"));
     }
 }
