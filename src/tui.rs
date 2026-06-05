@@ -2,8 +2,9 @@ use crate::clipboard::{clear_if_unchanged, copy_secret};
 use crate::errors::{AppError, AppResult};
 use crate::vault::{self, UnlockedVault};
 use rpassword::prompt_password;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -43,6 +44,25 @@ pub enum TuiParseError {
     MissingUsernameValue,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Completion {
+    None,
+    Single(String),
+    Multiple(Vec<&'static str>),
+}
+
+const COMMAND_NAMES: &[&str] = &[
+    "/add",
+    "/change-master",
+    "/copy",
+    "/delete",
+    "/exit",
+    "/help",
+    "/list",
+    "/update",
+    "/view",
+];
+
 pub fn parse_command(input: &str) -> Result<TuiCommand, TuiParseError> {
     let mut parts = input.split_whitespace();
     let command = parts.next().ok_or(TuiParseError::Empty)?;
@@ -76,6 +96,29 @@ pub fn parse_command(input: &str) -> Result<TuiCommand, TuiParseError> {
             Ok(TuiCommand::Delete { entry, username })
         }
         unknown => Err(TuiParseError::UnknownCommand(unknown.to_string())),
+    }
+}
+
+pub fn complete_command(input: &str) -> Completion {
+    if input.split_whitespace().count() > 1 || input.ends_with(char::is_whitespace) {
+        return Completion::None;
+    }
+
+    let prefix = input.trim();
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        return Completion::None;
+    }
+
+    let matches = COMMAND_NAMES
+        .iter()
+        .copied()
+        .filter(|command| command.starts_with(prefix))
+        .collect::<Vec<_>>();
+
+    match matches.as_slice() {
+        [] => Completion::None,
+        [command] => Completion::Single(format!("{command} ")),
+        _ => Completion::Multiple(matches),
     }
 }
 
@@ -162,14 +205,10 @@ fn run_repl<R: BufRead, W: Write>(
     output: &mut W,
 ) -> AppResult<()> {
     loop {
-        write!(output, "mypass> ")?;
-        output.flush()?;
-
-        let mut line = String::new();
-        if input.read_line(&mut line)? == 0 {
+        let Some(line) = read_command_line(input, output, "mypass> ")? else {
             writeln!(output, "Bye.")?;
             return Ok(());
-        }
+        };
 
         let line = line.trim();
         if line.is_empty() {
@@ -195,6 +234,133 @@ fn run_repl<R: BufRead, W: Write>(
             }
             Err(error) => writeln!(output, "{}", format_parse_error(error))?,
         }
+    }
+}
+
+fn read_command_line<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+) -> AppResult<Option<String>> {
+    if !io::stdin().is_terminal() {
+        write!(output, "{prompt}")?;
+        output.flush()?;
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        return Ok(Some(line));
+    }
+
+    #[cfg(unix)]
+    {
+        read_interactive_command_line(output, prompt)
+    }
+
+    #[cfg(not(unix))]
+    {
+        write!(output, "{prompt}")?;
+        output.flush()?;
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(line))
+    }
+}
+
+#[cfg(unix)]
+fn read_interactive_command_line(
+    output: &mut impl Write,
+    prompt: &str,
+) -> AppResult<Option<String>> {
+    let _raw_mode = RawMode::enable()?;
+    let mut input = io::stdin().lock();
+    let mut buffer = String::new();
+
+    write!(output, "{prompt}")?;
+    output.flush()?;
+
+    loop {
+        let mut byte = [0u8; 1];
+        if input.read(&mut byte)? == 0 {
+            return Ok(None);
+        }
+
+        match byte[0] {
+            b'\r' | b'\n' => {
+                writeln!(output)?;
+                return Ok(Some(buffer));
+            }
+            b'\t' => apply_completion(&mut buffer, output, prompt)?,
+            0x7f | 0x08 => {
+                if !buffer.is_empty() {
+                    buffer.pop();
+                    write!(output, "\x08 \x08")?;
+                    output.flush()?;
+                }
+            }
+            0x03 => {
+                writeln!(output)?;
+                return Ok(None);
+            }
+            byte if byte.is_ascii_control() => {}
+            byte => {
+                let character = byte as char;
+                buffer.push(character);
+                write!(output, "{character}")?;
+                output.flush()?;
+            }
+        }
+    }
+}
+
+fn apply_completion(buffer: &mut String, output: &mut impl Write, prompt: &str) -> AppResult<()> {
+    match complete_command(buffer) {
+        Completion::None => {}
+        Completion::Single(completed) => {
+            replace_current_line(buffer, &completed, output, prompt)?;
+        }
+        Completion::Multiple(commands) => {
+            writeln!(output)?;
+            for command in commands {
+                writeln!(output, "{command}")?;
+            }
+            write!(output, "{prompt}{buffer}")?;
+            output.flush()?;
+        }
+    }
+
+    Ok(())
+}
+
+fn replace_current_line(
+    buffer: &mut String,
+    replacement: &str,
+    output: &mut impl Write,
+    prompt: &str,
+) -> AppResult<()> {
+    *buffer = replacement.to_string();
+    write!(output, "\r\x1b[2K{prompt}{buffer}")?;
+    output.flush()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+struct RawMode;
+
+#[cfg(unix)]
+impl RawMode {
+    fn enable() -> AppResult<Self> {
+        Command::new("stty").args(["raw", "-echo"]).status()?;
+        Ok(Self)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        let _ = Command::new("stty").args(["sane"]).status();
     }
 }
 
@@ -393,5 +559,26 @@ mod tests {
             parse_command("/nope"),
             Err(TuiParseError::UnknownCommand(command)) if command == "/nope"
         ));
+    }
+
+    #[test]
+    fn completes_unique_command_prefix() {
+        assert_eq!(
+            complete_command("/v"),
+            Completion::Single("/view ".to_string())
+        );
+    }
+
+    #[test]
+    fn lists_ambiguous_command_prefixes() {
+        assert_eq!(
+            complete_command("/c"),
+            Completion::Multiple(vec!["/change-master", "/copy"])
+        );
+    }
+
+    #[test]
+    fn does_not_complete_after_command_arguments() {
+        assert_eq!(complete_command("/view g"), Completion::None);
     }
 }
