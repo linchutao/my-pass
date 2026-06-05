@@ -298,7 +298,7 @@ fn read_raw_command_line(
 
         match byte[0] {
             b'\r' | b'\n' => {
-                writeln!(output)?;
+                write!(output, "\r\n")?;
                 return Ok(Some(buffer));
             }
             b'\t' => apply_completion(&mut buffer, output, prompt)?,
@@ -310,7 +310,7 @@ fn read_raw_command_line(
                 }
             }
             0x03 => {
-                writeln!(output)?;
+                write!(output, "\r\n")?;
                 return Ok(None);
             }
             byte if byte.is_ascii_control() => {}
@@ -331,9 +331,9 @@ fn apply_completion(buffer: &mut String, output: &mut impl Write, prompt: &str) 
             replace_current_line(buffer, &completed, output, prompt)?;
         }
         Completion::Multiple(commands) => {
-            writeln!(output)?;
+            write!(output, "\r\n")?;
             for command in commands {
-                writeln!(output, "{command}")?;
+                write!(output, "{command}\r\n")?;
             }
             write!(output, "{prompt}{buffer}")?;
             output.flush()?;
@@ -601,5 +601,32 @@ mod tests {
             read_raw_command_line(&mut input, &mut output, "mypass> ").expect("read command line");
 
         assert_eq!(line.as_deref(), Some("/view "));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn raw_command_line_ends_input_with_crlf() {
+        let mut input = std::io::Cursor::new(b"/list\n");
+        let mut output = Vec::new();
+
+        read_raw_command_line(&mut input, &mut output, "mypass> ").expect("read command line");
+
+        assert!(
+            std::str::from_utf8(&output)
+                .expect("utf8 output")
+                .ends_with("\r\n")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ambiguous_completion_uses_crlf_between_candidates() {
+        let mut buffer = "/c".to_string();
+        let mut output = Vec::new();
+
+        apply_completion(&mut buffer, &mut output, "mypass> ").expect("apply completion");
+
+        let output = std::str::from_utf8(&output).expect("utf8 output");
+        assert!(output.contains("\r\n/change-master\r\n/copy\r\n"));
     }
 }
