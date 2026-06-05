@@ -254,7 +254,7 @@ fn read_command_line<R: BufRead, W: Write>(
 
     #[cfg(unix)]
     {
-        read_interactive_command_line(output, prompt)
+        read_interactive_command_line(input, output, prompt)
     }
 
     #[cfg(not(unix))]
@@ -270,12 +270,21 @@ fn read_command_line<R: BufRead, W: Write>(
 }
 
 #[cfg(unix)]
-fn read_interactive_command_line(
+fn read_interactive_command_line<R: BufRead>(
+    input: &mut R,
     output: &mut impl Write,
     prompt: &str,
 ) -> AppResult<Option<String>> {
     let _raw_mode = RawMode::enable()?;
-    let mut input = io::stdin().lock();
+    read_raw_command_line(input, output, prompt)
+}
+
+#[cfg(unix)]
+fn read_raw_command_line(
+    input: &mut impl Read,
+    output: &mut impl Write,
+    prompt: &str,
+) -> AppResult<Option<String>> {
     let mut buffer = String::new();
 
     write!(output, "{prompt}")?;
@@ -580,5 +589,17 @@ mod tests {
     #[test]
     fn does_not_complete_after_command_arguments() {
         assert_eq!(complete_command("/view g"), Completion::None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn raw_command_line_uses_provided_input_for_tab_completion() {
+        let mut input = std::io::Cursor::new(b"/v\t\n");
+        let mut output = Vec::new();
+
+        let line =
+            read_raw_command_line(&mut input, &mut output, "mypass> ").expect("read command line");
+
+        assert_eq!(line.as_deref(), Some("/view "));
     }
 }
