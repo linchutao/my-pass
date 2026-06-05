@@ -207,6 +207,74 @@ fn tui_view_shows_all_usernames_for_entry() {
 }
 
 #[test]
+fn tui_add_password_mismatch_stays_in_session() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("test.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "tui"])
+        .write_stdin("master\n/add github\nclyde@example.com\nfirst\nsecond\n/list\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Error: Password confirmation does not match",
+        ))
+        .stdout(predicate::str::contains("mypass> mypass>"))
+        .stdout(predicate::str::contains("Bye."));
+}
+
+#[test]
+fn tui_command_errors_stay_in_session() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("test.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "github"])
+        .write_stdin("master\nalice@example.com\nalice-secret\nalice-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "github"])
+        .write_stdin("master\nbob@example.com\nbob-secret\nbob-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "tui"])
+        .write_stdin(
+            "master\n/copy github\n/update github --username alice@example.com\n\nnew\nnope\n/delete github --username alice@example.com\nwrong\n/change-master\nmaster\nmaster\n/exit\n",
+        )
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Error: Multiple usernames found"))
+        .stdout(predicate::str::contains(
+            "Error: Password confirmation does not match",
+        ))
+        .stdout(predicate::str::contains(
+            "Error: Delete confirmation does not match",
+        ))
+        .stdout(predicate::str::contains(
+            "Error: New master password must be different",
+        ))
+        .stdout(predicate::str::contains("Bye."));
+}
+
+#[test]
 fn tui_prompts_for_vault_when_not_specified() {
     let temp = tempdir().expect("tempdir should be created");
     let vault_path = temp.path().join("prompted.mypass");

@@ -181,14 +181,18 @@ fn run_repl<R: BufRead, W: Write>(
                 writeln!(output, "Bye.")?;
                 return Ok(());
             }
-            Ok(command) => handle_command(
-                vault_path,
-                unlocked,
-                master_password,
-                command,
-                input,
-                output,
-            )?,
+            Ok(command) => {
+                if let Err(error) = handle_command(
+                    vault_path,
+                    unlocked,
+                    master_password,
+                    command,
+                    input,
+                    output,
+                ) {
+                    writeln!(output, "Error: {error}")?;
+                }
+            }
             Err(error) => writeln!(output, "{}", format_parse_error(error))?,
         }
     }
