@@ -1,1 +1,4 @@
 /target/
+/mypass
+*.mypass
+.idea/

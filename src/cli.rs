@@ -1,5 +1,6 @@
 use crate::clipboard::{clear_if_unchanged, copy_secret};
 use crate::errors::{AppError, AppResult};
+use crate::tui;
 use crate::vault;
 use clap::{Parser, Subcommand};
 use rpassword::prompt_password;
@@ -26,16 +27,23 @@ pub enum Commands {
     Get {
         entry: String,
         #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
         show: bool,
     },
     Update {
         entry: String,
+        #[arg(long)]
+        username: Option<String>,
     },
     Delete {
         entry: String,
+        #[arg(long)]
+        username: Option<String>,
     },
     List,
     ChangeMaster,
+    Tui,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -44,6 +52,7 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 pub fn run_cli(cli: Cli) -> AppResult<()> {
+    let vault_arg = cli.vault.clone();
     let vault_path = match cli.vault {
         Some(path) => path,
         None => vault::default_vault_path()?,
@@ -69,9 +78,14 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             )?;
             println!("Saved entry: {entry}");
         }
-        Commands::Get { entry, show } => {
+        Commands::Get {
+            entry,
+            username,
+            show,
+        } => {
             let master = prompt_secret("Master password: ")?;
-            let found = vault::get_entry(&vault_path, master.as_str(), &entry)?;
+            let found =
+                vault::get_entry(&vault_path, master.as_str(), &entry, username.as_deref())?;
             if show {
                 println!("Username: {}", found.username);
                 println!("Password: {}", found.password);
@@ -83,12 +97,20 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 println!("Clipboard cleared if unchanged.");
             }
         }
-        Commands::Update { entry } => {
+        Commands::Update {
+            entry,
+            username: lookup_username,
+        } => {
             let master = prompt_secret("Master password: ")?;
-            let existing = vault::get_entry(&vault_path, master.as_str(), &entry)?;
+            let existing = vault::get_entry(
+                &vault_path,
+                master.as_str(),
+                &entry,
+                lookup_username.as_deref(),
+            )?;
             let username_prompt = format!("Username [{}]: ", existing.username);
             let username_input = prompt_line(&username_prompt)?;
-            let username = if username_input.is_empty() {
+            let new_username = if username_input.is_empty() {
                 None
             } else {
                 Some(username_input.as_str())
@@ -98,12 +120,13 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
                 &vault_path,
                 master.as_str(),
                 &entry,
-                username,
+                lookup_username.as_deref(),
+                new_username,
                 password.as_str(),
             )?;
             println!("Updated entry: {entry}");
         }
-        Commands::Delete { entry } => {
+        Commands::Delete { entry, username } => {
             let master = prompt_secret("Master password: ")?;
             let confirmation = prompt_line(&format!(
                 "Delete entry \"{entry}\"? Type the entry name to confirm: "
@@ -111,7 +134,7 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             if confirmation != entry {
                 return Err(AppError::DeleteConfirmationMismatch);
             }
-            vault::delete_entry(&vault_path, master.as_str(), &entry)?;
+            vault::delete_entry(&vault_path, master.as_str(), &entry, username.as_deref())?;
             println!("Deleted entry: {entry}");
         }
         Commands::List => {
@@ -128,6 +151,9 @@ pub fn run_cli(cli: Cli) -> AppResult<()> {
             )?;
             vault::change_master_password(&vault_path, current.as_str(), new.as_str())?;
             println!("Master password changed.");
+        }
+        Commands::Tui => {
+            tui::run(vault_arg)?;
         }
     }
 
@@ -180,8 +206,38 @@ mod tests {
             Some(std::path::Path::new("./work.mypass"))
         );
         match cli.command {
-            Commands::Get { entry, show } => {
+            Commands::Get {
+                entry,
+                username,
+                show,
+            } => {
                 assert_eq!(entry, "github");
+                assert_eq!(username.as_deref(), None);
+                assert!(show);
+            }
+            _ => panic!("expected get command"),
+        }
+    }
+
+    #[test]
+    fn parses_get_with_username() {
+        let cli = Cli::parse_from([
+            "mypass",
+            "get",
+            "github",
+            "--username",
+            "alice@example.com",
+            "--show",
+        ]);
+
+        match cli.command {
+            Commands::Get {
+                entry,
+                username,
+                show,
+            } => {
+                assert_eq!(entry, "github");
+                assert_eq!(username.as_deref(), Some("alice@example.com"));
                 assert!(show);
             }
             _ => panic!("expected get command"),

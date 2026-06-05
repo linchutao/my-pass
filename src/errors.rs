@@ -13,6 +13,10 @@ pub enum AppError {
     EntryExists(String),
     #[error("Entry not found: {0}")]
     EntryNotFound(String),
+    #[error(
+        "Multiple usernames found for entry {entry}; specify --username. Available usernames: {usernames}"
+    )]
+    AmbiguousEntry { entry: String, usernames: String },
     #[error("Password confirmation does not match")]
     PasswordMismatch,
     #[error("Delete confirmation does not match")]

@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 use zeroize::Zeroize;
 
 pub const VAULT_VERSION: u32 = 1;
@@ -31,9 +33,9 @@ pub struct CipherBlob {
     pub ciphertext: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct VaultData {
-    pub entries: BTreeMap<String, Entry>,
+    pub entries: BTreeMap<String, BTreeMap<String, Entry>>,
 }
 
 impl VaultData {
@@ -42,6 +44,78 @@ impl VaultData {
             entries: BTreeMap::new(),
         }
     }
+}
+
+impl<'de> Deserialize<'de> for VaultData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(VaultDataVisitor)
+    }
+}
+
+struct VaultDataVisitor;
+
+impl<'de> Visitor<'de> for VaultDataVisitor {
+    type Value = VaultData;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("vault data with entries")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut entries = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "entries" => {
+                    if entries.is_some() {
+                        return Err(de::Error::duplicate_field("entries"));
+                    }
+                    let raw_entries: BTreeMap<String, serde_json::Value> = map.next_value()?;
+                    entries = Some(decode_entries(raw_entries).map_err(de::Error::custom)?);
+                }
+                _ => {
+                    let _ = map.next_value::<serde_json::Value>()?;
+                }
+            }
+        }
+
+        Ok(VaultData {
+            entries: entries.unwrap_or_default(),
+        })
+    }
+}
+
+fn decode_entries(
+    raw_entries: BTreeMap<String, serde_json::Value>,
+) -> Result<BTreeMap<String, BTreeMap<String, Entry>>, serde_json::Error> {
+    let mut entries = BTreeMap::new();
+
+    for (service, value) in raw_entries {
+        if is_legacy_entry(&value) {
+            let entry: Entry = serde_json::from_value(value)?;
+            entries
+                .entry(service)
+                .or_insert_with(BTreeMap::new)
+                .insert(entry.username.clone(), entry);
+        } else {
+            let service_entries: BTreeMap<String, Entry> = serde_json::from_value(value)?;
+            entries.insert(service, service_entries);
+        }
+    }
+
+    Ok(entries)
+}
+
+fn is_legacy_entry(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| object.contains_key("username") && object.contains_key("password"))
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,5 +195,26 @@ mod tests {
         assert!(debug.contains("clyde@example.com"));
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("super-secret"));
+    }
+
+    #[test]
+    fn vault_data_deserializes_legacy_single_entry_shape() {
+        let json = r#"{
+            "entries": {
+                "github": {
+                    "username": "clyde@example.com",
+                    "password": "secret",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "updated_at": "2026-05-28T00:00:00Z"
+                }
+            }
+        }"#;
+
+        let data: VaultData = serde_json::from_str(json).expect("deserialize legacy data");
+        let github = data.entries.get("github").expect("github service");
+        let entry = github.get("clyde@example.com").expect("username entry");
+
+        assert_eq!(entry.username, "clyde@example.com");
+        assert_eq!(entry.password, "secret");
     }
 }

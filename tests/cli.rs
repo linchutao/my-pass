@@ -76,3 +76,119 @@ fn change_master_flow() {
         .success()
         .stdout(predicate::str::contains("Password: secret"));
 }
+
+#[test]
+fn same_entry_supports_multiple_usernames() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("test.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "github"])
+        .write_stdin("master\nalice@example.com\nalice-secret\nalice-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "github"])
+        .write_stdin("master\nbob@example.com\nbob-secret\nbob-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "get", "github", "--show"])
+        .write_stdin("master\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Multiple usernames found"));
+
+    mypass()
+        .args([
+            "--vault",
+            &vault,
+            "get",
+            "github",
+            "--username",
+            "alice@example.com",
+            "--show",
+        ])
+        .write_stdin("master\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Username: alice@example.com"))
+        .stdout(predicate::str::contains("Password: alice-secret"));
+
+    mypass()
+        .args([
+            "--vault",
+            &vault,
+            "get",
+            "github",
+            "--username",
+            "bob@example.com",
+            "--show",
+        ])
+        .write_stdin("master\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Username: bob@example.com"))
+        .stdout(predicate::str::contains("Password: bob-secret"));
+}
+
+#[test]
+fn tui_lists_views_and_exits_with_custom_vault() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("test.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "github"])
+        .write_stdin("master\nclyde@example.com\nsecret\nsecret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "tui"])
+        .write_stdin("master\n/list\n/view github\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Unlocked vault:"))
+        .stdout(predicate::str::contains("github\tclyde@example.com"))
+        .stdout(predicate::str::contains("Username: clyde@example.com"))
+        .stdout(predicate::str::contains("Password: secret"))
+        .stdout(predicate::str::contains("Bye."));
+}
+
+#[test]
+fn tui_prompts_for_vault_when_not_specified() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("prompted.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["tui"])
+        .write_stdin(format!("{vault}\nmaster\n/exit\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Vault path [default:"))
+        .stdout(predicate::str::contains("Unlocked vault:"))
+        .stdout(predicate::str::contains("Bye."));
+}

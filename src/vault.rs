@@ -124,71 +124,228 @@ pub fn add_entry(
     password: &str,
 ) -> AppResult<()> {
     let mut vault = unlock_vault(path, master_password)?;
-    if vault.data.entries.contains_key(name) {
-        return Err(AppError::EntryExists(name.to_string()));
-    }
-
-    let now = Utc::now();
-    vault.data.entries.insert(
-        name.to_string(),
-        Entry {
-            username: username.to_string(),
-            password: password.to_string(),
-            created_at: now,
-            updated_at: now,
-        },
-    );
-    save_unlocked(path, &mut vault)
+    add_entry_unlocked(path, &mut vault, name, username, password)
 }
 
-pub fn get_entry(path: &Path, master_password: &str, name: &str) -> AppResult<Entry> {
-    let vault = unlock_vault(path, master_password)?;
-    vault
+pub fn add_entry_unlocked(
+    path: &Path,
+    vault: &mut UnlockedVault,
+    name: &str,
+    username: &str,
+    password: &str,
+) -> AppResult<()> {
+    if vault
         .data
         .entries
         .get(name)
-        .cloned()
-        .ok_or_else(|| AppError::EntryNotFound(name.to_string()))
+        .is_some_and(|entries| entries.contains_key(username))
+    {
+        return Err(AppError::EntryExists(format!("{name}/{username}")));
+    }
+
+    let now = Utc::now();
+    vault
+        .data
+        .entries
+        .entry(name.to_string())
+        .or_default()
+        .insert(
+            username.to_string(),
+            Entry {
+                username: username.to_string(),
+                password: password.to_string(),
+                created_at: now,
+                updated_at: now,
+            },
+        );
+    save_unlocked(path, vault)
+}
+
+pub fn get_entry(
+    path: &Path,
+    master_password: &str,
+    name: &str,
+    username: Option<&str>,
+) -> AppResult<Entry> {
+    let vault = unlock_vault(path, master_password)?;
+    get_entry_unlocked(&vault, name, username)
+}
+
+pub fn get_entry_unlocked(
+    vault: &UnlockedVault,
+    name: &str,
+    username: Option<&str>,
+) -> AppResult<Entry> {
+    select_entry(&vault.data, name, username).cloned()
 }
 
 pub fn update_entry(
     path: &Path,
     master_password: &str,
     name: &str,
-    username: Option<&str>,
+    lookup_username: Option<&str>,
+    new_username: Option<&str>,
     password: &str,
 ) -> AppResult<()> {
     let mut vault = unlock_vault(path, master_password)?;
-    let entry = vault
+    update_entry_unlocked(
+        path,
+        &mut vault,
+        name,
+        lookup_username,
+        new_username,
+        password,
+    )
+}
+
+pub fn update_entry_unlocked(
+    path: &Path,
+    vault: &mut UnlockedVault,
+    name: &str,
+    lookup_username: Option<&str>,
+    new_username: Option<&str>,
+    password: &str,
+) -> AppResult<()> {
+    let selected_username = select_username(&vault.data, name, lookup_username)?;
+    let mut entry = vault
         .data
         .entries
         .get_mut(name)
-        .ok_or_else(|| AppError::EntryNotFound(name.to_string()))?;
+        .and_then(|entries| entries.remove(&selected_username))
+        .ok_or_else(|| AppError::EntryNotFound(format!("{name}/{selected_username}")))?;
 
-    if let Some(username) = username {
-        entry.username = username.to_string();
+    if let Some(new_username) = new_username {
+        entry.username = new_username.to_string();
     }
     entry.password = password.to_string();
     entry.updated_at = Utc::now();
-    save_unlocked(path, &mut vault)
+
+    let destination_username = entry.username.clone();
+    if destination_username != selected_username
+        && vault
+            .data
+            .entries
+            .get(name)
+            .is_some_and(|entries| entries.contains_key(&destination_username))
+    {
+        vault
+            .data
+            .entries
+            .entry(name.to_string())
+            .or_default()
+            .insert(selected_username, entry);
+        return Err(AppError::EntryExists(format!(
+            "{name}/{destination_username}"
+        )));
+    }
+
+    vault
+        .data
+        .entries
+        .entry(name.to_string())
+        .or_default()
+        .insert(destination_username, entry);
+
+    if vault
+        .data
+        .entries
+        .get(name)
+        .is_some_and(|entries| entries.is_empty())
+    {
+        vault.data.entries.remove(name);
+    }
+
+    save_unlocked(path, vault)
 }
 
-pub fn delete_entry(path: &Path, master_password: &str, name: &str) -> AppResult<()> {
+pub fn delete_entry(
+    path: &Path,
+    master_password: &str,
+    name: &str,
+    username: Option<&str>,
+) -> AppResult<()> {
     let mut vault = unlock_vault(path, master_password)?;
-    if vault.data.entries.remove(name).is_none() {
-        return Err(AppError::EntryNotFound(name.to_string()));
+    delete_entry_unlocked(path, &mut vault, name, username)
+}
+
+pub fn delete_entry_unlocked(
+    path: &Path,
+    vault: &mut UnlockedVault,
+    name: &str,
+    username: Option<&str>,
+) -> AppResult<()> {
+    let selected_username = select_username(&vault.data, name, username)?;
+    let removed = vault
+        .data
+        .entries
+        .get_mut(name)
+        .and_then(|entries| entries.remove(&selected_username));
+    if removed.is_none() {
+        return Err(AppError::EntryNotFound(format!(
+            "{name}/{selected_username}"
+        )));
     }
-    save_unlocked(path, &mut vault)
+    if vault
+        .data
+        .entries
+        .get(name)
+        .is_some_and(|entries| entries.is_empty())
+    {
+        vault.data.entries.remove(name);
+    }
+    save_unlocked(path, vault)
 }
 
 pub fn list_entries(path: &Path, master_password: &str) -> AppResult<Vec<(String, String)>> {
     let vault = unlock_vault(path, master_password)?;
-    Ok(vault
+    Ok(list_entries_unlocked(&vault))
+}
+
+pub fn list_entries_unlocked(vault: &UnlockedVault) -> Vec<(String, String)> {
+    vault
         .data
         .entries
         .iter()
-        .map(|(name, entry)| (name.clone(), entry.username.clone()))
-        .collect())
+        .flat_map(|(name, entries)| {
+            entries
+                .keys()
+                .map(|username| (name.clone(), username.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn select_entry<'a>(
+    data: &'a VaultData,
+    name: &str,
+    username: Option<&str>,
+) -> AppResult<&'a Entry> {
+    let service_entries = data
+        .entries
+        .get(name)
+        .ok_or_else(|| AppError::EntryNotFound(name.to_string()))?;
+
+    match username {
+        Some(username) => service_entries
+            .get(username)
+            .ok_or_else(|| AppError::EntryNotFound(format!("{name}/{username}"))),
+        None if service_entries.len() == 1 => service_entries
+            .values()
+            .next()
+            .ok_or_else(|| AppError::EntryNotFound(name.to_string())),
+        None => Err(AppError::AmbiguousEntry {
+            entry: name.to_string(),
+            usernames: service_entries
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        }),
+    }
+}
+
+fn select_username(data: &VaultData, name: &str, username: Option<&str>) -> AppResult<String> {
+    Ok(select_entry(data, name, username)?.username.clone())
 }
 
 pub fn change_master_password(
@@ -201,13 +358,21 @@ pub fn change_master_password(
     }
 
     let mut vault = unlock_vault(path, old_master_password)?;
+    change_master_password_unlocked(path, &mut vault, new_master_password)
+}
+
+pub fn change_master_password_unlocked(
+    path: &Path,
+    vault: &mut UnlockedVault,
+    new_master_password: &str,
+) -> AppResult<()> {
     let kdf = default_kdf_config(random_salt());
     let kek = SecretKey::new(derive_kek(new_master_password, &kdf)?);
     let key_wrap = wrap_dek(kek.expose(), &vault.dek)?;
 
     vault.file.kdf = kdf;
     vault.file.key_wrap = key_wrap;
-    save_unlocked(path, &mut vault)
+    save_unlocked(path, vault)
 }
 
 fn read_vault_file(path: &Path) -> AppResult<VaultFile> {
@@ -490,25 +655,91 @@ mod tests {
             ]
         );
 
-        let created = get_entry(&path, "master", "github").expect("get entry");
+        let created = get_entry(&path, "master", "github", None).expect("get entry");
         assert_eq!(created.username, "clyde");
         assert_eq!(created.password, "first");
         assert_eq!(created.created_at, created.updated_at);
 
-        update_entry(&path, "master", "github", Some("new-clyde"), "second").expect("update entry");
-        let updated = get_entry(&path, "master", "github").expect("get updated");
+        update_entry(&path, "master", "github", None, Some("new-clyde"), "second")
+            .expect("update entry");
+        let updated = get_entry(&path, "master", "github", None).expect("get updated");
         assert_eq!(updated.username, "new-clyde");
         assert_eq!(updated.password, "second");
         assert_eq!(updated.created_at, created.created_at);
         assert!(updated.updated_at >= created.updated_at);
 
-        delete_entry(&path, "master", "github").expect("delete entry");
-        let err =
-            get_entry(&path, "master", "github").expect_err("deleted entry should be missing");
+        delete_entry(&path, "master", "github", None).expect("delete entry");
+        let err = get_entry(&path, "master", "github", None)
+            .expect_err("deleted entry should be missing");
         assert!(matches!(err, AppError::EntryNotFound(name) if name == "github"));
         assert_eq!(
             list_entries(&path, "master").expect("list after delete"),
             vec![("bank".to_string(), "clyde@example.com".to_string())]
+        );
+    }
+
+    #[test]
+    fn unlocked_entry_operations_persist_without_reunlocking() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+        init_vault(&path, "master").expect("init vault");
+
+        let mut unlocked = unlock_vault(&path, "master").expect("unlock vault");
+        add_entry_unlocked(&path, &mut unlocked, "github", "clyde", "secret")
+            .expect("add unlocked entry");
+
+        assert_eq!(
+            list_entries_unlocked(&unlocked),
+            vec![("github".to_string(), "clyde".to_string())]
+        );
+        assert_eq!(
+            get_entry_unlocked(&unlocked, "github", None)
+                .expect("get unlocked entry")
+                .password,
+            "secret"
+        );
+
+        drop(unlocked);
+        let persisted = get_entry(&path, "master", "github", None).expect("get persisted entry");
+        assert_eq!(persisted.password, "secret");
+    }
+
+    #[test]
+    fn same_entry_can_store_multiple_usernames() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let path = vault_path(&tempdir);
+        init_vault(&path, "master").expect("init vault");
+
+        add_entry(
+            &path,
+            "master",
+            "github",
+            "alice@example.com",
+            "alice-secret",
+        )
+        .expect("add alice");
+        add_entry(&path, "master", "github", "bob@example.com", "bob-secret").expect("add bob");
+
+        let err = get_entry(&path, "master", "github", None)
+            .expect_err("ambiguous service should require username");
+        assert!(matches!(err, AppError::AmbiguousEntry { entry, usernames }
+            if entry == "github"
+                && usernames.contains("alice@example.com")
+                && usernames.contains("bob@example.com")));
+
+        let alice =
+            get_entry(&path, "master", "github", Some("alice@example.com")).expect("get alice");
+        assert_eq!(alice.password, "alice-secret");
+
+        let bob = get_entry(&path, "master", "github", Some("bob@example.com")).expect("get bob");
+        assert_eq!(bob.password, "bob-secret");
+
+        assert_eq!(
+            list_entries(&path, "master").expect("list entries"),
+            vec![
+                ("github".to_string(), "alice@example.com".to_string()),
+                ("github".to_string(), "bob@example.com".to_string()),
+            ]
         );
     }
 
@@ -519,10 +750,10 @@ mod tests {
         init_vault(&path, "master").expect("init vault");
         add_entry(&path, "master", "github", "clyde", "first").expect("add entry");
 
-        let err = add_entry(&path, "master", "github", "someone", "second")
+        let err = add_entry(&path, "master", "github", "clyde", "second")
             .expect_err("duplicate should fail");
 
-        assert!(matches!(err, AppError::EntryExists(name) if name == "github"));
+        assert!(matches!(err, AppError::EntryExists(name) if name == "github/clyde"));
     }
 
     #[test]
@@ -537,7 +768,7 @@ mod tests {
         let err = unlock_vault(&path, "old-master").expect_err("old password should fail");
         assert!(matches!(err, AppError::AuthenticationFailed));
 
-        let entry = get_entry(&path, "new-master", "github").expect("new password unlocks");
+        let entry = get_entry(&path, "new-master", "github", None).expect("new password unlocks");
         assert_eq!(entry.username, "clyde");
         assert_eq!(entry.password, "secret");
     }
