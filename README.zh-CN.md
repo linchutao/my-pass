@@ -158,11 +158,11 @@ mypass --vault ./personal.mypass tui
 
 ```text
 /list
-/view <entry> [--username <username>]
-/copy <entry> [--username <username>]
+/view <entry> [-u <username>]
+/copy <entry> [-u <username>]
 /add <entry>
-/update <entry> [--username <username>]
-/delete <entry> [--username <username>]
+/update <entry> [-u <username>]
+/delete <entry> [-u <username>]
 /change-master
 /help
 /exit

@@ -151,7 +151,7 @@ fn parse_entry_args<'a>(
 
     while let Some(arg) = parts.next() {
         match arg {
-            "--username" => {
+            "-u" | "--username" => {
                 let value = parts.next().ok_or(TuiParseError::MissingUsernameValue)?;
                 username = Some(value.to_string());
             }
@@ -473,11 +473,11 @@ fn handle_command<R: BufRead, W: Write>(
 
 fn write_help(output: &mut impl Write) -> AppResult<()> {
     writeln!(output, "/list")?;
-    writeln!(output, "/view <entry> [--username <username>]")?;
-    writeln!(output, "/copy <entry> [--username <username>]")?;
+    writeln!(output, "/view <entry> [-u <username>]")?;
+    writeln!(output, "/copy <entry> [-u <username>]")?;
     writeln!(output, "/add <entry>")?;
-    writeln!(output, "/update <entry> [--username <username>]")?;
-    writeln!(output, "/delete <entry> [--username <username>]")?;
+    writeln!(output, "/update <entry> [-u <username>]")?;
+    writeln!(output, "/delete <entry> [-u <username>]")?;
     writeln!(output, "/change-master")?;
     writeln!(output, "/help")?;
     writeln!(output, "/exit")?;
@@ -555,6 +555,17 @@ mod tests {
     fn parses_entry_command_with_username() {
         assert_eq!(
             parse_command("/view github --username alice@example.com"),
+            Ok(TuiCommand::View {
+                entry: "github".to_string(),
+                username: Some("alice@example.com".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_entry_command_with_short_username_flag() {
+        assert_eq!(
+            parse_command("/view github -u alice@example.com"),
             Ok(TuiCommand::View {
                 entry: "github".to_string(),
                 username: Some("alice@example.com".to_string()),

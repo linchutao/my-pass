@@ -257,7 +257,7 @@ fn tui_command_errors_stay_in_session() {
     mypass()
         .args(["--vault", &vault, "tui"])
         .write_stdin(
-            "master\n/copy github\n/update github --username alice@example.com\n\nnew\nnope\n/delete github --username alice@example.com\nwrong\n/change-master\nmaster\nmaster\n/exit\n",
+            "master\n/copy github\n/update github -u alice@example.com\n\nnew\nnope\n/delete github -u alice@example.com\nwrong\n/change-master\nmaster\nmaster\n/exit\n",
         )
         .assert()
         .success()
