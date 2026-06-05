@@ -209,9 +209,16 @@ fn handle_command<R: BufRead, W: Write>(
             }
         }
         TuiCommand::View { entry, username } => {
-            let found = vault::get_entry_unlocked(unlocked, &entry, username.as_deref())?;
-            writeln!(output, "Username: {}", found.username)?;
-            writeln!(output, "Password: {}", found.password)?;
+            if let Some(username) = username {
+                let found = vault::get_entry_unlocked(unlocked, &entry, Some(&username))?;
+                writeln!(output, "Username: {}", found.username)?;
+                writeln!(output, "Password: {}", found.password)?;
+            } else {
+                for found in vault::get_entries_unlocked(unlocked, &entry)? {
+                    writeln!(output, "Username: {}", found.username)?;
+                    writeln!(output, "Password: {}", found.password)?;
+                }
+            }
         }
         TuiCommand::Copy { entry, username } => {
             let found = vault::get_entry_unlocked(unlocked, &entry, username.as_deref())?;

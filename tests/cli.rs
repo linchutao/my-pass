@@ -172,6 +172,41 @@ fn tui_lists_views_and_exits_with_custom_vault() {
 }
 
 #[test]
+fn tui_view_shows_all_usernames_for_entry() {
+    let temp = tempdir().expect("tempdir should be created");
+    let vault_path = temp.path().join("test.mypass");
+    let vault = vault_path.to_string_lossy().into_owned();
+
+    mypass()
+        .args(["--vault", &vault, "init"])
+        .write_stdin("master\nmaster\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "163"])
+        .write_stdin("master\n18814384446\nphone-secret\nphone-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "add", "163"])
+        .write_stdin("master\nlinchutaomail@163.com\nmail-secret\nmail-secret\n")
+        .assert()
+        .success();
+
+    mypass()
+        .args(["--vault", &vault, "tui"])
+        .write_stdin("master\n/view 163\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Username: 18814384446"))
+        .stdout(predicate::str::contains("Password: phone-secret"))
+        .stdout(predicate::str::contains("Username: linchutaomail@163.com"))
+        .stdout(predicate::str::contains("Password: mail-secret"));
+}
+
+#[test]
 fn tui_prompts_for_vault_when_not_specified() {
     let temp = tempdir().expect("tempdir should be created");
     let vault_path = temp.path().join("prompted.mypass");

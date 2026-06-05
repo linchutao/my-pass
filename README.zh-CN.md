@@ -128,6 +128,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 mypass init
 ```
 
+默认密码库文件是 `~/personal.mypass`。
+
 或指定一个密码库文件：
 
 ```bash

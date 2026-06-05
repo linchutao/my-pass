@@ -6,7 +6,7 @@ use crate::model::{
     CIPHER_ALGORITHM, CipherBlob, Entry, KDF_ALGORITHM, VAULT_VERSION, VaultData, VaultFile,
 };
 use chrono::Utc;
-use directories::ProjectDirs;
+use directories::UserDirs;
 use rand_core::{OsRng, RngCore};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -78,8 +78,8 @@ impl Drop for UnlockedVault {
 }
 
 pub fn default_vault_path() -> AppResult<PathBuf> {
-    let dirs = ProjectDirs::from("", "", "mypass").ok_or(AppError::DefaultVaultDirUnavailable)?;
-    Ok(dirs.data_dir().join("vault.mypass"))
+    let dirs = UserDirs::new().ok_or(AppError::DefaultVaultDirUnavailable)?;
+    Ok(dirs.home_dir().join("personal.mypass"))
 }
 
 pub fn init_vault(path: &Path, master_password: &str) -> AppResult<()> {
@@ -177,6 +177,16 @@ pub fn get_entry_unlocked(
     username: Option<&str>,
 ) -> AppResult<Entry> {
     select_entry(&vault.data, name, username).cloned()
+}
+
+pub fn get_entries_unlocked(vault: &UnlockedVault, name: &str) -> AppResult<Vec<Entry>> {
+    let service_entries = vault
+        .data
+        .entries
+        .get(name)
+        .ok_or_else(|| AppError::EntryNotFound(name.to_string()))?;
+
+    Ok(service_entries.values().cloned().collect())
 }
 
 pub fn update_entry(
@@ -578,6 +588,19 @@ mod tests {
 
     fn vault_path(tempdir: &tempfile::TempDir) -> std::path::PathBuf {
         tempdir.path().join("vault.mypass")
+    }
+
+    #[test]
+    fn default_vault_path_uses_home_personal_mypass() {
+        let home = directories::UserDirs::new()
+            .expect("user dirs should be available")
+            .home_dir()
+            .to_path_buf();
+
+        assert_eq!(
+            default_vault_path().expect("default vault path"),
+            home.join("personal.mypass")
+        );
     }
 
     #[test]

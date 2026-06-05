@@ -141,6 +141,8 @@ Use the default vault location:
 mypass init
 ```
 
+The default vault file is `~/personal.mypass`.
+
 Or specify a vault file:
 
 ```bash
