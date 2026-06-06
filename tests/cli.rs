@@ -164,7 +164,11 @@ fn tui_lists_views_and_exits_with_custom_vault() {
         .write_stdin("master\n/list\n/view github\n/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Unlocked vault:"))
+        .stdout(predicate::str::contains("Welcome back to MyPass."))
+        .stdout(predicate::str::contains("Vault unlocked:"))
+        .stdout(predicate::str::contains(
+            "Your secrets are ready. Type /help for commands.",
+        ))
         .stdout(predicate::str::contains("github\tclyde@example.com"))
         .stdout(predicate::str::contains("Username: clyde@example.com"))
         .stdout(predicate::str::contains("Password: secret"))
@@ -292,6 +296,10 @@ fn tui_prompts_for_vault_when_not_specified() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Vault path [default:"))
-        .stdout(predicate::str::contains("Unlocked vault:"))
+        .stdout(predicate::str::contains("Welcome back to MyPass."))
+        .stdout(predicate::str::contains("Vault unlocked:"))
+        .stdout(predicate::str::contains(
+            "Your secrets are ready. Type /help for commands.",
+        ))
         .stdout(predicate::str::contains("Bye."));
 }

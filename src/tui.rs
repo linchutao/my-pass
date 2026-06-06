@@ -181,8 +181,9 @@ pub fn run(vault_arg: Option<PathBuf>) -> AppResult<()> {
 
     let mut master_password = prompt_secret("Master password: ")?;
     let mut unlocked = vault::unlock_vault(&vault_path, master_password.as_str())?;
-    println!("Unlocked vault: {}", vault_path.display());
-    println!("Type /help for commands.");
+    println!("Welcome back to MyPass.");
+    println!("Vault unlocked: {}", vault_path.display());
+    println!("Your secrets are ready. Type /help for commands.");
 
     let stdin = io::stdin();
     let mut input = stdin.lock();
