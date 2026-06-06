@@ -1,8 +1,8 @@
 # MyPass
 
 MyPass is a local-first password manager written in Rust. It stores account
-credentials in an encrypted local vault file and exposes a small command-line
-interface for daily use.
+credentials in an encrypted local vault file and opens directly into a small
+terminal UI for daily use.
 
 The project is intentionally simple: no cloud sync, no browser extension, no
 remote account system, and no unlocked background session. A vault is just a
@@ -10,14 +10,14 @@ local encrypted file.
 
 ## Features
 
-- Initialize a local encrypted vault.
+- Start directly in TUI mode with `./mypass`.
+- Create a vault from the TUI when the selected vault file does not exist.
 - Add account credentials.
-- Get credentials by entry name.
+- View or copy credentials by entry name.
 - Update an existing entry.
 - Delete an entry with explicit confirmation.
 - List saved entries without showing passwords.
 - Change the master password without re-encrypting every entry.
-- Use a default vault path or specify a vault file with `--vault <path>`.
 
 ## Security Model
 
@@ -47,8 +47,8 @@ master password + salt
 ```
 
 Changing the master password does not re-encrypt every account entry. MyPass
-uses the old master password to unlock the DEK, derives a new KEK from the new
-master password, then re-encrypts the same DEK.
+uses the current master password to unlock the DEK, derives a new KEK from the
+new master password, then re-encrypts the same DEK.
 
 ## Cryptography
 
@@ -107,12 +107,6 @@ To put a runnable binary in the project root:
 cp target/release/mypass ./mypass
 ```
 
-Verify:
-
-```bash
-./mypass --version
-```
-
 ## Test And Checks
 
 Run the test suite:
@@ -135,42 +129,24 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Usage
 
-Use the default vault location:
+Start MyPass:
 
 ```bash
-mypass init
+./mypass
 ```
 
-The default vault file is `~/personal.mypass`.
+MyPass prompts for a vault file path:
 
-Or specify a vault file:
-
-```bash
-mypass --vault ./personal.mypass init
+```text
+Vault path [default: ~/personal.mypass]:
 ```
 
-`--vault` means a vault file path, not a directory. Use the same `--vault` value
-for later commands if you do not want the default vault.
+Press enter to use the default path, or type a different vault file path. If the
+file does not exist, MyPass creates a new vault after prompting for a master
+password. If the file already exists, MyPass prompts for the master password and
+unlocks the vault.
 
-### Interactive Mode
-
-Start a command-style interactive session:
-
-```bash
-mypass tui
-```
-
-Or open a specific vault:
-
-```bash
-mypass --vault ./personal.mypass tui
-```
-
-When `--vault` is omitted, MyPass prompts for a vault file path. Press enter to
-use the default vault path. After that, enter the master password once to unlock
-the vault for the session.
-
-Available interactive commands:
+After unlocking, use commands inside the TUI:
 
 ```text
 /list
@@ -187,78 +163,43 @@ Available interactive commands:
 `/exit` leaves the session and drops the unlocked vault state and in-memory
 master password.
 
-### Initialize
-
-```bash
-mypass --vault ./personal.mypass init
-```
-
-Prompts:
-
-```text
-Create master password:
-Confirm master password:
-```
-
 ### Add Entry
 
-```bash
-mypass --vault ./personal.mypass add github
-```
-
-Prompts:
-
 ```text
-Master password:
+mypass> /add github
 Username:
 Password:
 Confirm password:
 ```
 
 The entry name is the service name. The username is stored under that service,
-so the same service can have multiple usernames:
+so the same service can have multiple usernames.
 
-```bash
-mypass --vault ./personal.mypass add github
-# Username: alice@example.com
+### View Entry
 
-mypass --vault ./personal.mypass add github
-# Username: bob@example.com
-```
-
-### Get Entry
-
-Default behavior copies the password to the clipboard:
-
-```bash
-mypass --vault ./personal.mypass get github
-```
-
-MyPass prints a copied message immediately, waits 30 seconds, and clears the
-clipboard only if it still contains the copied password.
-
-To print the password explicitly:
-
-```bash
-mypass --vault ./personal.mypass get github --show
+```text
+mypass> /view github
 ```
 
 If a service has more than one username, specify the username:
 
-```bash
-mypass --vault ./personal.mypass get github --username alice@example.com --show
+```text
+mypass> /view github -u alice@example.com
 ```
+
+### Copy Password
+
+```text
+mypass> /copy github
+```
+
+MyPass copies the password to the clipboard, waits 30 seconds, and clears the
+clipboard only if it still contains the copied password.
 
 ### Update Entry
 
-```bash
-mypass --vault ./personal.mypass update github
-```
-
-Prompts:
-
 ```text
-Master password:
+mypass> /update github
 Username [current username]:
 New password:
 Confirm new password:
@@ -268,71 +209,48 @@ Press enter at the username prompt to keep the current username.
 
 If a service has more than one username, specify which one to update:
 
-```bash
-mypass --vault ./personal.mypass update github --username alice@example.com
+```text
+mypass> /update github -u alice@example.com
 ```
 
 ### Delete Entry
 
-```bash
-mypass --vault ./personal.mypass delete github
-```
-
-Prompts:
-
 ```text
-Master password:
+mypass> /delete github
 Delete entry "github"? Type the entry name to confirm:
 ```
 
-The entry is deleted only when the confirmation exactly matches the entry name.
+Only an exact confirmation deletes the entry.
 
 If a service has more than one username, specify which one to delete:
 
-```bash
-mypass --vault ./personal.mypass delete github --username alice@example.com
+```text
+mypass> /delete github -u alice@example.com
 ```
 
 ### List Entries
 
-```bash
-mypass --vault ./personal.mypass list
+```text
+mypass> /list
+github  alice@example.com
+github  bob@example.com
 ```
 
-This shows service names and usernames only. It does not show passwords.
+The list output shows entry names and usernames, not passwords.
 
 ### Change Master Password
 
-```bash
-mypass --vault ./personal.mypass change-master
-```
-
-Prompts:
-
 ```text
-Current master password:
+mypass> /change-master
 New master password:
 Confirm new master password:
 ```
 
-The old master password stops working after this succeeds.
-
-## Examples
-
-```bash
-./mypass --vault ./demo.mypass init
-./mypass --vault ./demo.mypass add github
-./mypass --vault ./demo.mypass get github --show
-./mypass --vault ./demo.mypass update github
-./mypass --vault ./demo.mypass list
-./mypass --vault ./demo.mypass change-master
-./mypass --vault ./demo.mypass delete github
-```
+This re-wraps the vault DEK with a KEK derived from the new master password.
+Account entries are not re-encrypted one by one.
 
 ## Notes
 
 - Do not pass passwords as command-line arguments.
-- Keep vault backups if the data matters.
-- Use a long, high-entropy master password.
-- The root-level `mypass` binary is a local build artifact. Rebuild it after
-  source changes with `cargo build --release`.
+- Keep backups of important vault files.
+- Losing the master password means losing access to the vault.

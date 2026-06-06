@@ -3,7 +3,6 @@ use crate::errors::{AppError, AppResult};
 use crate::vault::{self, UnlockedVault};
 use rpassword::prompt_password;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -162,24 +161,28 @@ fn parse_entry_args<'a>(
     Ok((entry, username))
 }
 
-pub fn run(vault_arg: Option<PathBuf>) -> AppResult<()> {
+pub fn run() -> AppResult<()> {
     let default_vault_path = vault::default_vault_path()?;
-    let vault_path = match vault_arg {
-        Some(path) => path,
-        None => {
-            let input = prompt_line(&format!(
-                "Vault path [default: {}]: ",
-                default_vault_path.display()
-            ))?;
-            if input.is_empty() {
-                default_vault_path
-            } else {
-                PathBuf::from(input)
-            }
-        }
+    let input = prompt_line(&format!(
+        "Vault path [default: {}]: ",
+        default_vault_path.display()
+    ))?;
+    let vault_path = if input.is_empty() {
+        default_vault_path
+    } else {
+        input.into()
     };
 
-    let mut master_password = prompt_secret("Master password: ")?;
+    let mut master_password = if vault_path.exists() {
+        prompt_secret("Master password: ")?
+    } else {
+        println!("Vault not found. Create a new vault.");
+        let master_password =
+            prompt_confirmed_secret("Create master password: ", "Confirm master password: ")?;
+        vault::init_vault(&vault_path, master_password.as_str())?;
+        println!("Vault initialized: {}", vault_path.display());
+        master_password
+    };
     let mut unlocked = vault::unlock_vault(&vault_path, master_password.as_str())?;
     println!("Welcome back to MyPass.");
     println!("Vault unlocked: {}", vault_path.display());
@@ -533,6 +536,15 @@ fn prompt_secret(prompt: &str) -> AppResult<Zeroizing<String>> {
     }
 
     Ok(Zeroizing::new(prompt_line(prompt)?))
+}
+
+fn prompt_confirmed_secret(prompt: &str, confirm_prompt: &str) -> AppResult<Zeroizing<String>> {
+    let password = prompt_secret(prompt)?;
+    let confirmation = prompt_secret(confirm_prompt)?;
+    if password.as_str() != confirmation.as_str() {
+        return Err(AppError::PasswordMismatch);
+    }
+    Ok(password)
 }
 
 fn prompt_line(prompt: &str) -> AppResult<String> {

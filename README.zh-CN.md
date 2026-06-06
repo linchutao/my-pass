@@ -1,20 +1,19 @@
 # MyPass
 
-MyPass 是一个用 Rust 编写的本地优先密码管理器。它把账号凭据保存在本地加密密码库文件中，并提供一个适合日常使用的小型命令行界面。
+MyPass 是一个用 Rust 编写的本地优先密码管理器。它把账号凭据保存在本地加密密码库文件中，并且启动后直接进入适合日常使用的终端交互界面。
 
 这个项目刻意保持简单：没有云同步，没有浏览器扩展，没有远程账号系统，也没有后台保持解锁的会话。一个密码库就是一个本地加密文件。
 
 ## 功能
 
-- 初始化本地加密密码库。
+- 使用 `./mypass` 直接进入 TUI 模式。
+- 选择的密码库文件不存在时，可在 TUI 启动阶段创建新密码库。
 - 添加账号凭据。
-- 按条目名称获取凭据。
+- 按条目名称查看或复制凭据。
 - 更新已有条目。
 - 删除条目，并要求显式确认。
 - 列出已保存条目，但不显示密码。
 - 修改主密码，并且不需要逐条重新加密账号数据。
-- 使用默认密码库路径，或通过 `--vault <path>` 指定密码库文件。
-- 使用 `mypass tui` 进入命令式交互模式。
 
 ## 安全模型
 
@@ -40,7 +39,7 @@ master password + salt
 -> entries
 ```
 
-修改主密码不会逐条重新加密账号条目。MyPass 会先用旧主密码解锁 DEK，再用新主密码派生新的 KEK，然后用新的 KEK 重新加密同一个 DEK。
+修改主密码不会逐条重新加密账号条目。MyPass 会先用当前主密码解锁 DEK，再用新主密码派生新的 KEK，然后用新的 KEK 重新加密同一个 DEK。
 
 ## 密码学
 
@@ -94,12 +93,6 @@ cargo build --release
 cp target/release/mypass ./mypass
 ```
 
-验证：
-
-```bash
-./mypass --version
-```
-
 ## 测试与检查
 
 运行测试：
@@ -122,39 +115,21 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 使用
 
-使用默认密码库位置：
+启动 MyPass：
 
 ```bash
-mypass init
+./mypass
 ```
 
-默认密码库文件是 `~/personal.mypass`。
+MyPass 会提示输入密码库文件路径：
 
-或指定一个密码库文件：
-
-```bash
-mypass --vault ./personal.mypass init
+```text
+Vault path [default: ~/personal.mypass]:
 ```
 
-`--vault` 表示密码库文件路径，不是目录。如果你不想使用默认密码库，后续命令也需要使用相同的 `--vault` 值。
+直接回车会使用默认路径，也可以输入其他密码库文件路径。如果文件不存在，MyPass 会提示创建主密码并初始化新密码库。如果文件已经存在，MyPass 会提示输入主密码并解锁密码库。
 
-### 交互模式
-
-启动命令式交互会话：
-
-```bash
-mypass tui
-```
-
-或打开指定密码库：
-
-```bash
-mypass --vault ./personal.mypass tui
-```
-
-如果省略 `--vault`，MyPass 会提示输入密码库文件路径。直接回车会使用默认密码库路径。之后输入一次主密码来解锁本次会话。
-
-交互模式可用命令：
+解锁后，在 TUI 中使用命令：
 
 ```text
 /list
@@ -170,76 +145,41 @@ mypass --vault ./personal.mypass tui
 
 `/exit` 会离开会话，并释放已解锁的密码库状态和内存中的主密码。
 
-### 初始化
-
-```bash
-mypass --vault ./personal.mypass init
-```
-
-提示：
-
-```text
-Create master password:
-Confirm master password:
-```
-
 ### 添加条目
 
-```bash
-mypass --vault ./personal.mypass add github
-```
-
-提示：
-
 ```text
-Master password:
+mypass> /add github
 Username:
 Password:
 Confirm password:
 ```
 
-条目名称通常是服务名称。用户名会保存在该服务名下，所以同一个服务可以保存多个用户名：
+条目名称通常是服务名称。用户名会保存在该服务名下，所以同一个服务可以保存多个用户名。
 
-```bash
-mypass --vault ./personal.mypass add github
-# Username: alice@example.com
+### 查看条目
 
-mypass --vault ./personal.mypass add github
-# Username: bob@example.com
-```
-
-### 获取条目
-
-默认行为会把密码复制到剪贴板：
-
-```bash
-mypass --vault ./personal.mypass get github
-```
-
-MyPass 会立即打印复制成功消息，等待 30 秒，然后仅在剪贴板内容仍然是刚复制的密码时清空剪贴板。
-
-如果要明确打印密码：
-
-```bash
-mypass --vault ./personal.mypass get github --show
+```text
+mypass> /view github
 ```
 
 如果同一个服务下有多个用户名，需要指定用户名：
 
-```bash
-mypass --vault ./personal.mypass get github --username alice@example.com --show
+```text
+mypass> /view github -u alice@example.com
 ```
+
+### 复制密码
+
+```text
+mypass> /copy github
+```
+
+MyPass 会把密码复制到剪贴板，等待 30 秒，然后仅在剪贴板内容仍然是刚复制的密码时清空剪贴板。
 
 ### 更新条目
 
-```bash
-mypass --vault ./personal.mypass update github
-```
-
-提示：
-
 ```text
-Master password:
+mypass> /update github
 Username [current username]:
 New password:
 Confirm new password:
@@ -249,20 +189,14 @@ Confirm new password:
 
 如果同一个服务下有多个用户名，需要指定要更新哪一个：
 
-```bash
-mypass --vault ./personal.mypass update github --username alice@example.com
+```text
+mypass> /update github -u alice@example.com
 ```
 
 ### 删除条目
 
-```bash
-mypass --vault ./personal.mypass delete github
-```
-
-提示：
-
 ```text
-Master password:
+mypass> /delete github
 Delete entry "github"? Type the entry name to confirm:
 ```
 
@@ -270,49 +204,32 @@ Delete entry "github"? Type the entry name to confirm:
 
 如果同一个服务下有多个用户名，需要指定要删除哪一个：
 
-```bash
-mypass --vault ./personal.mypass delete github --username alice@example.com
+```text
+mypass> /delete github -u alice@example.com
 ```
 
 ### 列出条目
 
-```bash
-mypass --vault ./personal.mypass list
+```text
+mypass> /list
+github  alice@example.com
+github  bob@example.com
 ```
 
-只显示服务名称和用户名，不显示密码。
+列表只显示条目名称和用户名，不显示密码。
 
 ### 修改主密码
 
-```bash
-mypass --vault ./personal.mypass change-master
-```
-
-提示：
-
 ```text
-Current master password:
+mypass> /change-master
 New master password:
 Confirm new master password:
 ```
 
-修改成功后，旧主密码会停止工作。
+这会用新主密码派生出的 KEK 重新包装密码库 DEK。账号条目不会逐条重新加密。
 
-## 示例
-
-```bash
-./mypass --vault ./demo.mypass init
-./mypass --vault ./demo.mypass add github
-./mypass --vault ./demo.mypass get github --show
-./mypass --vault ./demo.mypass update github
-./mypass --vault ./demo.mypass list
-./mypass --vault ./demo.mypass change-master
-./mypass --vault ./demo.mypass delete github
-```
-
-## 注意事项
+## 注意
 
 - 不要把密码作为命令行参数传入。
-- 如果数据重要，请保留密码库备份。
-- 使用足够长、熵足够高的主密码。
-- 项目根目录下的 `mypass` 二进制文件是本地构建产物。源码变更后，请用 `cargo build --release` 重新构建。
+- 请备份重要的密码库文件。
+- 丢失主密码意味着无法再访问密码库。
