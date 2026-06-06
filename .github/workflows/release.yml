@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_suffix }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_suffix: linux-x86_64
+          - os: macos-latest
+            asset_suffix: macos-arm64
+          - os: windows-latest
+            asset_suffix: windows-x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist staging
+          cp target/release/mypass staging/mypass
+          tar -czf "dist/mypass-${{ github.ref_name }}-${{ matrix.asset_suffix }}.tar.gz" -C staging mypass
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, staging
+          Copy-Item target\release\mypass.exe staging\mypass.exe
+          Compress-Archive -Path staging\mypass.exe -DestinationPath "dist\mypass-${{ github.ref_name }}-${{ matrix.asset_suffix }}.zip"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypass-${{ matrix.asset_suffix }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" dist/* --clobber
+          else
+            gh release create "${{ github.ref_name }}" dist/* \
+              --title "${{ github.ref_name }}" \
+              --notes "Automated release for ${{ github.ref_name }}" \
+              --verify-tag
+          fi
