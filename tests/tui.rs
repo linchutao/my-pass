@@ -68,6 +68,30 @@ fn executable_rejects_cli_arguments() {
 }
 
 #[test]
+fn executable_prints_version_with_short_flag() {
+    mypass()
+        .arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "mypass {}",
+            env!("CARGO_PKG_VERSION")
+        )));
+}
+
+#[test]
+fn executable_prints_version_with_long_flag() {
+    mypass()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "mypass {}",
+            env!("CARGO_PKG_VERSION")
+        )));
+}
+
+#[test]
 fn tui_view_shows_all_usernames_for_entry() {
     let temp = tempdir().expect("tempdir should be created");
     let vault_path = temp.path().join("test.mypass");
