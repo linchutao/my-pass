@@ -30,6 +30,7 @@ pub enum TuiCommand {
         username: Option<String>,
     },
     ChangeMaster,
+    Clear,
     Help,
     Exit,
 }
@@ -53,6 +54,7 @@ pub enum Completion {
 const COMMAND_NAMES: &[&str] = &[
     "/add",
     "/change-master",
+    "/clear",
     "/copy",
     "/delete",
     "/exit",
@@ -71,6 +73,7 @@ pub fn parse_command(input: &str) -> Result<TuiCommand, TuiParseError> {
         "/help" => parse_no_args(TuiCommand::Help, parts),
         "/exit" => parse_no_args(TuiCommand::Exit, parts),
         "/change-master" => parse_no_args(TuiCommand::ChangeMaster, parts),
+        "/clear" => parse_no_args(TuiCommand::Clear, parts),
         "/view" => {
             let (entry, username) = parse_entry_args("/view", parts)?;
             Ok(TuiCommand::View { entry, username })
@@ -417,7 +420,8 @@ fn handle_command<R: BufRead, W: Write>(
         }
         TuiCommand::Add { entry } => {
             let username = read_prompt(input, output, "Username: ")?;
-            let password = read_confirmed(input, output, "Password: ", "Confirm password: ")?;
+            let password =
+                read_confirmed_secret(input, output, "Password: ", "Confirm password: ")?;
             vault::add_entry_unlocked(vault_path, unlocked, &entry, &username, password.as_str())?;
             writeln!(output, "Saved entry: {entry}")?;
         }
@@ -431,7 +435,7 @@ fn handle_command<R: BufRead, W: Write>(
                 Some(username_input.as_str())
             };
             let password =
-                read_confirmed(input, output, "New password: ", "Confirm new password: ")?;
+                read_confirmed_secret(input, output, "New password: ", "Confirm new password: ")?;
             vault::update_entry_unlocked(
                 vault_path,
                 unlocked,
@@ -455,7 +459,7 @@ fn handle_command<R: BufRead, W: Write>(
             writeln!(output, "Deleted entry: {entry}")?;
         }
         TuiCommand::ChangeMaster => {
-            let new = read_confirmed(
+            let new = read_confirmed_secret(
                 input,
                 output,
                 "New master password: ",
@@ -467,6 +471,10 @@ fn handle_command<R: BufRead, W: Write>(
             vault::change_master_password_unlocked(vault_path, unlocked, new.as_str())?;
             *master_password = new;
             writeln!(output, "Master password changed.")?;
+        }
+        TuiCommand::Clear => {
+            write!(output, "\x1b[2J\x1b[H")?;
+            output.flush()?;
         }
         TuiCommand::Help => write_help(output)?,
         TuiCommand::Exit => {}
@@ -483,6 +491,7 @@ fn write_help(output: &mut impl Write) -> AppResult<()> {
     writeln!(output, "/update <entry> [-u <username>]")?;
     writeln!(output, "/delete <entry> [-u <username>]")?;
     writeln!(output, "/change-master")?;
+    writeln!(output, "/clear")?;
     writeln!(output, "/help")?;
     writeln!(output, "/exit")?;
     Ok(())
@@ -516,6 +525,24 @@ fn read_confirmed<R: BufRead, W: Write>(
         return Err(AppError::PasswordMismatch);
     }
     Ok(password)
+}
+
+fn read_confirmed_secret<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+    confirm_prompt: &str,
+) -> AppResult<Zeroizing<String>> {
+    if io::stdin().is_terminal() {
+        let password = prompt_secret(prompt)?;
+        let confirmation = prompt_secret(confirm_prompt)?;
+        if password.as_str() != confirmation.as_str() {
+            return Err(AppError::PasswordMismatch);
+        }
+        return Ok(password);
+    }
+
+    read_confirmed(input, output, prompt, confirm_prompt)
 }
 
 fn read_prompt<R: BufRead, W: Write>(
@@ -565,6 +592,11 @@ mod tests {
     }
 
     #[test]
+    fn parses_clear_command() {
+        assert_eq!(parse_command("/clear"), Ok(TuiCommand::Clear));
+    }
+
+    #[test]
     fn parses_entry_command_with_username() {
         assert_eq!(
             parse_command("/view github --username alice@example.com"),
@@ -606,8 +638,62 @@ mod tests {
     fn lists_ambiguous_command_prefixes() {
         assert_eq!(
             complete_command("/c"),
-            Completion::Multiple(vec!["/change-master", "/copy"])
+            Completion::Multiple(vec!["/change-master", "/clear", "/copy"])
         );
+    }
+
+    #[test]
+    fn completes_clear_command_prefix() {
+        assert_eq!(
+            complete_command("/cl"),
+            Completion::Single("/clear ".to_string())
+        );
+    }
+
+    #[test]
+    fn help_lists_clear_command() {
+        let mut output = Vec::new();
+
+        write_help(&mut output).expect("write help");
+
+        let output = std::str::from_utf8(&output).expect("utf8 output");
+        assert!(output.contains("/clear\n"));
+    }
+
+    #[test]
+    fn clear_command_emits_clear_screen_sequence() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let vault_path = temp.path().join("test.mypass");
+        vault::init_vault(&vault_path, "master").expect("vault should be initialized");
+        let mut unlocked = vault::unlock_vault(&vault_path, "master").expect("vault should unlock");
+        let mut master_password = Zeroizing::new("master".to_string());
+        let mut input = std::io::Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+
+        handle_command(
+            &vault_path,
+            &mut unlocked,
+            &mut master_password,
+            TuiCommand::Clear,
+            &mut input,
+            &mut output,
+        )
+        .expect("clear command");
+
+        assert_eq!(output, b"\x1b[2J\x1b[H");
+    }
+
+    #[test]
+    fn confirmed_secret_reads_from_provided_input_when_not_interactive() {
+        let mut input = std::io::Cursor::new(b"secret\nsecret\n");
+        let mut output = Vec::new();
+
+        let password =
+            read_confirmed_secret(&mut input, &mut output, "Password: ", "Confirm password: ")
+                .expect("confirmed secret");
+
+        assert_eq!(password.as_str(), "secret");
+        assert_eq!(output, b"Password: Confirm password: ");
     }
 
     #[test]
@@ -651,6 +737,6 @@ mod tests {
         apply_completion(&mut buffer, &mut output, "mypass> ").expect("apply completion");
 
         let output = std::str::from_utf8(&output).expect("utf8 output");
-        assert!(output.contains("\r\n/change-master\r\n/copy\r\n"));
+        assert!(output.contains("\r\n/change-master\r\n/clear\r\n/copy\r\n"));
     }
 }

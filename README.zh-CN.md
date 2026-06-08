@@ -139,6 +139,7 @@ Vault path [default: ~/personal.mypass]:
 /update <entry> [-u <username>]
 /delete <entry> [-u <username>]
 /change-master
+/clear
 /help
 /exit
 ```
@@ -153,6 +154,8 @@ Username:
 Password:
 Confirm password:
 ```
+
+密码输入时不会在终端回显。
 
 条目名称通常是服务名称。用户名会保存在该服务名下，所以同一个服务可以保存多个用户名。
 
@@ -184,6 +187,8 @@ Username [current username]:
 New password:
 Confirm new password:
 ```
+
+密码输入时不会在终端回显。
 
 在用户名提示处直接回车会保留当前用户名。
 
@@ -227,6 +232,14 @@ Confirm new master password:
 ```
 
 这会用新主密码派生出的 KEK 重新包装密码库 DEK。账号条目不会逐条重新加密。
+
+### 清屏
+
+```text
+mypass> /clear
+```
+
+这会清除当前会话中终端里可见的输出。它不会修改密码库数据，也不会影响已解锁的会话状态。
 
 ## 注意
 

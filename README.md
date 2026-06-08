@@ -156,6 +156,7 @@ After unlocking, use commands inside the TUI:
 /update <entry> [-u <username>]
 /delete <entry> [-u <username>]
 /change-master
+/clear
 /help
 /exit
 ```
@@ -171,6 +172,8 @@ Username:
 Password:
 Confirm password:
 ```
+
+Password prompts hide input while you type.
 
 The entry name is the service name. The username is stored under that service,
 so the same service can have multiple usernames.
@@ -204,6 +207,8 @@ Username [current username]:
 New password:
 Confirm new password:
 ```
+
+Password prompts hide input while you type.
 
 Press enter at the username prompt to keep the current username.
 
@@ -248,6 +253,15 @@ Confirm new master password:
 
 This re-wraps the vault DEK with a KEK derived from the new master password.
 Account entries are not re-encrypted one by one.
+
+### Clear Screen
+
+```text
+mypass> /clear
+```
+
+This clears the visible terminal output for the current session. It does not
+change vault data or the unlocked session state.
 
 ## Notes
 
